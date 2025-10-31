@@ -11,6 +11,14 @@ import org.cyclops.cyclopscore.proxy.IClientProxyCommon;
 import org.cyclops.cyclopscore.proxy.ICommonProxyCommon;
 import org.cyclops.iconexporter.command.CommandExport;
 import org.cyclops.iconexporter.command.CommandExportMetadata;
+import org.cyclops.iconexporter.command.CommandExportEnv;
+import org.cyclops.iconexporter.command.CommandExportRecipes;
+import org.cyclops.iconexporter.command.CommandExportData;
+import org.cyclops.iconexporter.command.CommandExportAll;
+import org.cyclops.iconexporter.command.CommandExportTextures;
+import org.cyclops.iconexporter.command.CommandExportModels;
+import org.cyclops.iconexporter.command.CommandExportTranslations;
+import org.cyclops.iconexporter.command.CommandValidate;
 import org.cyclops.iconexporter.helpers.IconExporterHelpersForge;
 import org.cyclops.iconexporter.proxy.ClientProxyForge;
 import org.cyclops.iconexporter.proxy.CommonProxyForge;
@@ -40,6 +48,14 @@ public class IconExporterForge extends ModBaseForge<IconExporterForge> {
             IconExporterHelpersForge helpers = new IconExporterHelpersForge();
             root.then(CommandExport.make(context, this, helpers));
             root.then(CommandExportMetadata.make(context, this, helpers));
+            root.then(CommandExportEnv.make(context, this, helpers));
+            root.then(CommandExportRecipes.make(context, this, helpers));
+            root.then(CommandExportData.make(context, this, helpers));
+            root.then(CommandExportAll.make(context, this, helpers));
+            root.then(CommandExportTextures.make(context, this, helpers));
+            root.then(CommandExportModels.make(context, this, helpers));
+            root.then(CommandExportTranslations.make(context, this, helpers));
+            root.then(CommandValidate.make(context, this, helpers));
         }
 
         return root;

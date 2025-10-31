@@ -63,6 +63,22 @@ public class ScreenIconExporter extends Screen {
         if (exportTasks.isEmpty()) {
             Minecraft.getInstance().setScreen(null);
             Minecraft.getInstance().player.sendSystemMessage(Component.translatable("gui.itemexporter.finished"));
+
+            // Check if we should quit after export (for CI/automation)
+            boolean shouldQuit = GeneralConfig.autoQuitAfterExport;
+
+            // Also check the legacy system property for backwards compatibility
+            String quitAfterExport = System.getProperty("iconexporter.quitAfterExport");
+            if ("true".equalsIgnoreCase(quitAfterExport)) {
+                shouldQuit = true;
+            }
+
+            if (shouldQuit) {
+                this.mod.log("Icon export complete, quitting game as requested");
+                Minecraft.getInstance().execute(() -> {
+                    Minecraft.getInstance().stop();
+                });
+            }
         } else {
             IExportTask task = exportTasks.poll();
             try {
@@ -91,9 +107,22 @@ public class ScreenIconExporter extends Screen {
         float scaleModified = (float) (this.scaleImage / this.scaleGui);
         int scaleModifiedRounded = (int) Math.ceil(scaleModified);
 
-        // Initialize our output folder
-        File baseDir = new File(Minecraft.getInstance().gameDirectory, "icon-exports-x" + this.scaleImage);
-        baseDir.mkdir();
+        // Initialize our output folder (legacy or structured based on config)
+        String modpackName = GeneralConfig.modpackName;
+        String mcVersion;
+        try {
+            mcVersion = net.minecraft.SharedConstants.getCurrentVersion().getName();
+        } catch (Throwable t) {
+            mcVersion = "unknown";
+        }
+        String loader = detectLoader();
+        File baseDir = org.cyclops.iconexporter.export.EnvironmentExportUtil.resolveIconsDir(
+                Minecraft.getInstance().gameDirectory,
+                this.scaleImage,
+                modpackName,
+                mcVersion,
+                loader
+        );
 
         // Create a list of tasks
         Wrapper<Integer> tasks = new Wrapper<>(0);
@@ -143,4 +172,19 @@ public class ScreenIconExporter extends Screen {
         Minecraft.getInstance().player.displayClientMessage(Component.translatable("gui.itemexporter.status", taskProcessed.get(), tasks.get()), true);
     }
 
+    private static String detectLoader() {
+        if (classExists("net.fabricmc.loader.api.FabricLoader")) return "fabric";
+        if (classExists("net.neoforged.fml.loading.FMLLoader")) return "neoforge";
+        if (classExists("net.minecraftforge.fml.loading.FMLLoader")) return "forge";
+        return "unknown";
+    }
+
+    private static boolean classExists(String className) {
+        try {
+            Class.forName(className);
+            return true;
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
 }

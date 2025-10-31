@@ -30,3 +30,8 @@ extra-mods
 # Ignore files specific to dev environments
 secrets.properties
 changelog.txt
+
+jars
+latest.log
+modpacks
+othersources

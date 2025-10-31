@@ -7,8 +7,14 @@ plugins {
 }
 
 dependencies {
-    // Add something like 'cyclopscore_version_local=0.1.0-DEV' to your secrets.properties if you want to use a custom local CyclopsCore version.
-    if (secrets.cyclopscore_version_local) {
+    // Use local JAR files from jars folder or fall back to remote repository
+    def localCyclopsCoreForge = file("${rootProject.projectDir}/jars/cyclopscore-${project.minecraft_version}-forge-1.27.0.jar")
+
+    if (localCyclopsCoreForge.exists()) {
+        // Use local JAR file
+        implementation files(localCyclopsCoreForge)
+    } else if (secrets.cyclopscore_version_local) {
+        // Add something like 'cyclopscore_version_local=0.1.0-DEV' to your secrets.properties if you want to use a custom local CyclopsCore version.
         implementation "org.cyclops.cyclopscore:cyclopscore-${project.minecraft_version}-forge:${secrets.cyclopscore_version_local}:deobf"
     } else {
         implementation "org.cyclops.cyclopscore:cyclopscore-${project.minecraft_version}-forge:${project.cyclopscore_version}:deobf"

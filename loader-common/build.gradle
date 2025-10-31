@@ -3,8 +3,18 @@ plugins {
 }
 
 dependencies {
-    // Add something like 'cyclopscore_version_local=0.1.0-DEV' to your secrets.properties if you want to use a custom local CyclopsCore version.
-    if (secrets.cyclopscore_version_local) {
+    // Use local JAR files from jars folder or fall back to remote repository
+    def localCyclopsCoreCommon = file("${rootProject.projectDir}/jars/cyclopscore-${project.minecraft_version}-common-1.27.0.jar")
+    def localCyclopsCoreFabric = file("${rootProject.projectDir}/jars/cyclopscore-${project.minecraft_version}-fabric-1.27.0.jar")
+
+    if (localCyclopsCoreCommon.exists()) {
+        // Use local common JAR file
+        compileOnly files(localCyclopsCoreCommon)
+    } else if (localCyclopsCoreFabric.exists()) {
+        // Fall back to fabric JAR which includes common classes
+        compileOnly files(localCyclopsCoreFabric)
+    } else if (secrets.cyclopscore_version_local) {
+        // Add something like 'cyclopscore_version_local=0.1.0-DEV' to your secrets.properties if you want to use a custom local CyclopsCore version.
         implementation "org.cyclops.cyclopscore:cyclopscore-${project.minecraft_version}-common:${secrets.cyclopscore_version_local}:deobf"
     } else {
         implementation "org.cyclops.cyclopscore:cyclopscore-${project.minecraft_version}-common:${project.cyclopscore_version}:deobf"
