@@ -1,4 +1,4 @@
-Plea# CLAUDE.md
+# CLAUDE.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
@@ -113,16 +113,41 @@ Used in `ScreenIconExporter`, `CommandExportEnv`, and `CommandExportRecipes`.
 
 Located in `loader-common/src/main/java/org/cyclops/iconexporter/command/`:
 
-1. **`/iconexporter export [scale]`** - Opens export GUI
-2. **`/iconexporter exportmetadata`** - Exports `icon-exports-metadata.json`
-3. **`/iconexporter exportenv`** - Exports environment metadata to `meta/modpack.json`
-4. **`/iconexporter exportrecipes`** - Stub for future recipe export
+1. **`/iconexporter export [scale]`** - Opens export GUI for rendered icons
+2. **`/iconexporter exportall`** - **Exports EVERYTHING** (env, recipes, data, textures, models, translations, icons)
+3. **`/iconexporter exportenv`** - Exports environment metadata (modpack.json, mods.json, datapacks.json)
+4. **`/iconexporter exportrecipes`** - Exports all recipes to JSON files
+5. **`/iconexporter exportdata`** - Exports detailed item and block data to JSON
+6. **`/iconexporter exporttextures`** - Extracts raw texture PNG files from resource packs
+7. **`/iconexporter exportmodels`** - Exports 3D model JSON definitions
+8. **`/iconexporter exporttranslations`** - Exports translation keys and display names
+9. **`/iconexporter exportmetadata`** - Exports icon metadata JSON (legacy)
+10. **`/iconexporter validate`** - Validates icon exports against actual game items
 
 Commands are registered in each loader's `constructBaseCommand()` method.
 
-### Export Pipeline
+**Recommended workflow**: Use `/iconexporter exportall` to export everything in one command. This runs all export utilities sequentially with proper error handling.
 
-1. User runs `/iconexporter export [scale]`
+### Export Pipeline Architecture
+
+**Full Export Pipeline** (`CommandExportAll`):
+
+The `/iconexporter exportall` command orchestrates all export operations in sequence:
+
+1. **Environment Export** (`CommandExportEnv`) - Exports modpack.json, mods.json, datapacks.json
+2. **Recipe Export** (`CommandExportRecipes`) - Exports all recipes with custom mod recipe fallback
+3. **Data Export** (`CommandExportData`) - Exports detailed item/block metadata
+4. **Texture Export** (`CommandExportTextures`) - Extracts raw PNG textures (runs async)
+5. **Model Export** (`CommandExportModels`) - Exports 3D model JSON definitions (runs async)
+6. **Translation Export** (`CommandExportTranslations`) - Exports translation data
+7. **Wait for Async** - Waits 2 seconds for async exports to complete
+8. **Icon Export** (`CommandExport`) - Opens GUI for rendered icon export
+
+Each step has its own error handling, so failures in one export don't stop the pipeline.
+
+**Icon Rendering Pipeline** (`ScreenIconExporter`):
+
+1. User runs `/iconexporter export [scale]` (or triggered by `exportall`)
 2. `ScreenIconExporter` opens and creates task queue:
    - Iterates all fluids in `BuiltInRegistries.FLUID`
    - Iterates all items from creative tabs (via helpers)
@@ -148,12 +173,29 @@ minecraft/icon-exports-x32/
 **Structured mode** (`useStructuredOutput = true`):
 ```
 minecraft/exports/MyModpack/1.21.1/fabric/
-  icons/
+  icons/                    # Rendered item/block icons (PNG)
     minecraft__stone.png
+  textures/
+    items/                  # Raw item texture files
+    blocks/                 # Raw block texture files
+  models/
+    items/                  # Item model JSON definitions
+    blocks/                 # Block model JSON definitions
+  recipes/                  # All recipes (JSON, organized by namespace)
+    minecraft/
+    create/
+  data/
+    items/                  # Detailed item information (JSON)
+    blocks/                 # Detailed block information (JSON)
   meta/
-    modpack.json
-  recipes/
-    (future)
+    modpack.json            # Environment metadata
+    mods.json               # All mods with versions
+    datapacks.json          # All datapacks
+  translations/
+    items.json              # Item translation keys and display names
+    blocks.json             # Block translation keys and display names
+  logs/
+    errors.txt              # Export error log
 ```
 
 ### Configuration (`GeneralConfig.java`)
@@ -163,8 +205,31 @@ Key config options:
 - `fileNameHashComponents` (default: false) - Hash components with MD5
 - `useStructuredOutput` (default: false) - Enable multi-modpack structure
 - `exportBaseDir` (default: "exports") - Base directory for exports
-- `autoExportOnStartup` (default: false) - Auto-trigger on world join
+- `autoExportOnStartup` (default: false) - Auto-trigger export on world join
+- `autoCreateWorld` (default: false) - Auto-create and load temp world for CI/CD
+- `autoExportDelay` (default: 5) - Seconds to wait before auto-export starts
 - `modpackName` - Identifier for structured output
+
+### Auto-Export System
+
+The mod includes a fully automated export system for CI/CD pipelines:
+
+**Components**:
+- `AutoExportHandler` - Triggers export when player joins world
+- `WorldAutoLoader` - Creates and loads temp world automatically on title screen
+- `MinimalWorldCreator` - Creates minimal flat world for export
+
+**How it works**:
+1. Set `autoExportOnStartup = true` and `autoCreateWorld = true` in config
+2. Launch Minecraft
+3. `WorldAutoLoader` detects `TitleScreen` and navigates to world selection
+4. Creates `iconexporter_temp` world if it doesn't exist
+5. Loads the world automatically using `WorldOpenFlows` API
+6. `AutoExportHandler` detects world join and triggers export after delay
+7. Runs full export pipeline via `CommandExportAll`
+8. Game can quit automatically with `-Diconexporter.quitAfterExport=true` JVM flag
+
+**For CI/CD**: This enables completely hands-free automation with zero manual steps.
 
 ## Code Conventions
 
@@ -187,16 +252,43 @@ The project uses **Project Lombok** for code generation. IDE plugin required:
   - `/` → `___`
 - Components optionally hashed with MD5 if `fileNameHashComponents = true`
 
+### Export Utilities
+
+The `loader-common/src/main/java/org/cyclops/iconexporter/export/` package contains specialized export utilities:
+
+- **`EnvironmentExportUtil`** - Exports modpack.json with loader/version info
+- **`ModsExportUtil`** - Exports mods.json with all mod metadata
+- **`DatapacksExportUtil`** - Exports datapacks.json listing all datapacks
+- **`RecipeExportUtil`** - Exports recipes with custom mod recipe fallback
+- **`ItemDataExportUtil`** - Exports detailed item metadata (damage, durability, etc.)
+- **`BlockDataExportUtil`** - Exports block properties (hardness, light level, etc.)
+- **`TextureExportUtil`** - Extracts raw PNG textures from resource packs (async)
+- **`ModelExportUtil`** - Exports 3D model JSON definitions (async)
+- **`TranslationExportUtil`** - Exports translation keys and display names
+- **`ErrorLogUtil`** - Centralized error logging to `logs/errors.txt`
+- **`ModMetadataExtractor`** - Platform-agnostic mod metadata extraction
+- **`ManifestParser`** - Parses JAR manifests for mod info
+
+**Key patterns**:
+- All utilities use static methods for easy invocation
+- Export to structured paths based on `GeneralConfig.useStructuredOutput`
+- Errors logged to `ErrorLogUtil` don't stop export pipeline
+- Async exports (textures/models) run on background threads
+
 ## Development Workflow
 
 ### Adding New Export Functionality
 1. Add logic to `loader-common/src/main/java/org/cyclops/iconexporter/export/`
-2. If platform-specific, add method to `IIconExporterHelpers` interface
-3. Implement in all three loader helpers:
+2. Create a new `*ExportUtil.java` utility class with static export methods
+3. If platform-specific, add method to `IIconExporterHelpers` interface
+4. Implement in all three loader helpers:
    - `IconExporterHelpersFabric`
    - `IconExporterHelpersForge`
    - `IconExporterHelpersNeoForge`
-4. Update configuration in `GeneralConfig.java` if needed
+5. Create a new command in `command/` package that calls your utility
+6. Register command in each loader's `constructBaseCommand()`
+7. Add to `CommandExportAll` pipeline if it should be part of full export
+8. Update configuration in `GeneralConfig.java` if needed
 
 ### Adding New Commands
 1. Create command in `loader-common/.../command/`
@@ -226,6 +318,39 @@ Note: `downloadAssets` can be slow, skip with `-x :loader-forge:downloadAssets` 
 - **`release-{mc_version}`**: Stable releases (tagged with versions)
 
 Current branch: `master-1.21-lts` (for Minecraft 1.21.1)
+
+## Error Handling
+
+### Export Error Logging
+
+All export operations use `ErrorLogUtil` for centralized error tracking:
+- Individual item/block/recipe failures don't stop the export
+- Errors are logged to `<export_dir>/logs/errors.txt`
+- Stack traces include context (item ID, file path, etc.)
+- Export commands show summary of errors in chat
+
+### Custom Mod Recipes
+
+Many mods define custom recipe types that don't use Minecraft's standard codec serialization. The recipe exporter handles these gracefully:
+
+**Standard recipes** (crafting, smelting, etc.):
+- Export with full JSON data via codec serialization
+
+**Custom mod recipes** (Create, Thermal, Mekanism, etc.):
+- Export with fallback data when codec fails:
+  - Recipe ID (`"id": "create:crushing/diamond"`)
+  - Recipe type/serializer (`"type": "create:crushing"`)
+  - Result item and count (if available)
+  - Export note explaining custom recipe type
+  - Error message from codec for debugging
+
+This ensures **all recipes are exported**, even if custom recipes have limited data.
+
+### Known Export Limitations
+
+**Banner Patterns**: Items with banner patterns may not include component data in filenames/txt files due to registry validation. PNG icons still export correctly.
+
+**Component Serialization**: Items with complex registry-backed components may fail component serialization. Items still export, but without component suffix in filenames.
 
 ## Common Issues
 
