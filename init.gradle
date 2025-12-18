@@ -1,0 +1,41 @@
+// Gradle init script to ensure Minecraft libraries are resolvable
+// This runs before any build script and affects ALL configurations
+
+allprojects {
+    repositories {
+        // LOCAL LWJGL repository - populated by download-lwjgl.sh in Docker
+        // This has highest priority for LWJGL resolution
+        maven {
+            name = 'Local LWJGL'
+            url = uri('/iconexporter/local-maven-repo')
+            content {
+                includeGroupAndSubgroups('org.lwjgl')
+            }
+        }
+        // Add Mojang's library server for LWJGL and other Minecraft dependencies
+        maven {
+            name = 'Mojang Libraries Init'
+            url = 'https://libraries.minecraft.net/'
+            content {
+                includeGroupAndSubgroups('org.lwjgl')
+                includeGroupAndSubgroups('com.mojang')
+            }
+        }
+        // Fallback to Maven Central for other dependencies
+        mavenCentral()
+    }
+}
+
+// Force resolution from our repositories for minecraftLibraries configuration
+gradle.projectsEvaluated {
+    allprojects { project ->
+        project.configurations.all { config ->
+            if (config.name == 'minecraftLibraries') {
+                config.resolutionStrategy {
+                    // Ensure we use consistent versions
+                    failOnVersionConflict()
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,16 @@
+Docker Production Runtime Export
+================================
+Generated: Wed Dec 10 07:04:21 CET 2025
+Minecraft: 1.21.1
+Mode: Production (intermediary mappings)
+
+Library classpath entries: 80
+Bundled mods: 53
+
+Production mode allows loading user mods from the mods/ folder.
+User mods should be standard Fabric mods (intermediary mappings).
+
+The entrypoint will:
+1. Download the official Minecraft client JAR from Mojang
+2. Copy bundled mods and user mods to run/mods/
+3. Launch Fabric Loader in production mode

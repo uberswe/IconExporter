@@ -1,0 +1,67 @@
+# Git and version control
+.git
+.gitignore
+.gitattributes
+
+# IDE and editor files
+.idea
+.vscode
+*.iml
+*.ipr
+*.iws
+.project
+.classpath
+.settings
+
+# Build outputs and caches
+build/
+.gradle/
+out/
+target/
+bin/
+*.class
+
+# Test outputs
+test-output/
+test-results/
+
+# Logs
+*.log
+logs/
+
+# Local configuration
+local.properties
+# Note: gradle.properties is needed for downloadMinecraftClient task
+
+# OS files
+.DS_Store
+Thumbs.db
+*~
+
+# Exports and mods (these are mounted as volumes)
+exports/
+mods/
+icon-exports*/
+
+# Large local directories not needed for build
+modpacks/
+test-mods/
+runs/
+othersources/
+jars/
+
+# Documentation (not needed in image)
+docs/
+*.md
+!README.Docker.md
+
+# CI/CD
+.github/
+.circleci/
+.travis.yml
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+*~

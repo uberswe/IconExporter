@@ -1,0 +1,20 @@
+Docker Runtime Export (NeoForge - Userdev Mode)
+============================================
+Generated: Wed Dec 17 06:27:29 CET 2025
+Minecraft: 1.21.1
+NeoForge: 21.1.2
+Mode: Userdev (uses deobfuscated Minecraft classes from Gradle)
+
+Library classpath entries: 105
+Bundled mods: 2
+Deobfuscated Minecraft JAR included: Yes (packRecomp/output.jar (NeoForm deobfuscated))
+
+This runtime uses the forgeclientuserdev launch target with
+deobfuscated Minecraft classes exported from the Gradle build.
+
+User mods should be standard NeoForge mods.
+
+The entrypoint will:
+1. Use included deobfuscated Minecraft classes (no download needed)
+2. Copy bundled mods and user mods to run/mods/
+3. Launch NeoForge in userdev mode

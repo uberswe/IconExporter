@@ -1,0 +1,53 @@
+version: '3.8'
+
+services:
+  iconexporter:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: iconexporter:fabric
+    container_name: iconexporter
+
+    # Mount directories
+    volumes:
+      # Input: Mods directory (read-only)
+      - ./mods:/iconexporter/input-mods:ro
+      # Output: Exports directory (read-write)
+      - ./exports:/iconexporter/exports
+
+    # Environment configuration
+    environment:
+      # Icon export settings
+      - ICONEXPORTER_SCALE=${ICONEXPORTER_SCALE:-32}
+      - ICONEXPORTER_MODPACK_NAME=${ICONEXPORTER_MODPACK_NAME:-modpack}
+      - ICONEXPORTER_AUTO_DELAY=${ICONEXPORTER_AUTO_DELAY:-30}
+      - ICONEXPORTER_TIMEOUT=${ICONEXPORTER_TIMEOUT:-1800}
+
+      # Java settings
+      - JAVA_OPTS=${JAVA_OPTS:--Xmx4G -Xms2G}
+
+      # Display for Xvfb
+      - DISPLAY=:99
+
+    # Don't restart automatically
+    restart: "no"
+
+    # Resource limits (optional - adjust based on your needs)
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 6G
+        reservations:
+          memory: 2G
+
+    # Shared memory for OpenGL rendering
+    shm_size: '256m'
+
+# Example usage:
+# 1. Place your mod JARs in ./mods directory
+# 2. Run: docker-compose up
+# 3. Exports will be in ./exports directory
+#
+# Override settings:
+# ICONEXPORTER_SCALE=64 ICONEXPORTER_MODPACK_NAME=atm10 docker-compose up
