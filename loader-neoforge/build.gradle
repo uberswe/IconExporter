@@ -49,3 +49,157 @@ modrinth {
     }
 }
 tasks.modrinth.dependsOn(tasks.jar)
+
+// Task to generate a production runtime for Docker that supports user mods
+// This exports JARs for NeoForge production mode
+task exportDockerProductionRuntime {
+    description = "Exports a production runtime for Docker that supports loading user mods (NeoForge)"
+    group = "docker"
+
+    // Ensure NeoForm has built the deobfuscated Minecraft JAR
+    dependsOn jar
+    dependsOn 'neoFormPackRecomp'
+
+    doLast {
+        def dockerDir = project.file("${project.rootDir}/docker-runtime-neoforge")
+        def libsDir = new File(dockerDir, "libs")
+        def modsDir = new File(dockerDir, "mods")
+
+        dockerDir.mkdirs()
+        libsDir.mkdirs()
+        modsDir.mkdirs()
+
+        // Collect production classpath entries (excluding mods)
+        def classpathEntries = []
+
+        // Track if we found the Minecraft merged JAR
+        def foundMinecraftMerged = false
+        def minecraftMergedJarName = null
+
+        // Find the deobfuscated Minecraft JAR from NeoForm's output
+        // The packRecomp step produces the final deobfuscated/recompiled JAR
+        def neoFormDir = project.file("build/neoForm")
+        def packRecompJar = null
+
+        if (neoFormDir.exists()) {
+            neoFormDir.eachDirRecurse { dir ->
+                if (dir.name == "packRecomp") {
+                    def outputJar = new File(dir, "output.jar")
+                    if (outputJar.exists()) {
+                        packRecompJar = outputJar
+                    }
+                }
+            }
+        }
+
+        if (packRecompJar != null && packRecompJar.exists()) {
+            def destFile = new File(libsDir, "minecraft-client.jar")
+            ant.copy(file: packRecompJar, tofile: destFile, overwrite: true)
+            classpathEntries.add("libs/minecraft-client.jar")
+            foundMinecraftMerged = true
+            minecraftMergedJarName = "packRecomp/output.jar (NeoForm deobfuscated)"
+            println "  Minecraft: ${packRecompJar.absolutePath}"
+            println "         -> libs/minecraft-client.jar (deobfuscated)"
+        }
+
+        // Get runtime classpath - filter to only include libraries, not mods
+        configurations.runtimeClasspath.files.each { file ->
+            // Skip mod JARs - they'll go in the mods folder
+            // CyclopsCore is a mod dependency
+            if (file.name.contains("cyclopscore")) {
+                // This is a mod - copy to mods folder
+                def destFile = new File(modsDir, file.name)
+                if (!destFile.exists()) {
+                    ant.copy(file: file, tofile: destFile)
+                }
+                println "  Mod: ${file.name} -> mods/"
+            } else if (file.name.contains("client-extra")) {
+                // Include client-extra resources (textures, sounds, etc.)
+                def destFile = new File(libsDir, "minecraft-client-extra.jar")
+                if (!destFile.exists()) {
+                    ant.copy(file: file, tofile: destFile)
+                }
+                classpathEntries.add("libs/minecraft-client-extra.jar")
+                println "  Minecraft Extra: ${file.name} -> libs/minecraft-client-extra.jar"
+            } else if (file.name.startsWith("ng_dummy_ng")) {
+                // Skip NeoForge gradle dummy artifacts (placeholders)
+                println "  Skipping dummy artifact: ${file.name}"
+            } else if (file.name.startsWith("neoforge-") && file.name.endsWith(".jar")) {
+                // Skip NeoForge JAR - packRecomp output already includes patched Minecraft+NeoForge classes
+                // Including both causes: "Found multiple copies of net/minecraft/client/Minecraft.class"
+                println "  Skipping NeoForge JAR (already in packRecomp output): ${file.name}"
+            } else if (file.name.startsWith("mixinextras-neoforge")) {
+                // Skip mixinextras-neoforge JAR - it's included as JarInJar in packRecomp output
+                // Including both causes: "Module mixinextras.neoforge reads another module named mixinextras.neoforge"
+                println "  Skipping mixinextras-neoforge (already in packRecomp JarInJar): ${file.name}"
+            } else {
+                // Library - add to classpath
+                def destFile = new File(libsDir, file.name)
+                if (!destFile.exists()) {
+                    ant.copy(file: file, tofile: destFile)
+                }
+                classpathEntries.add("libs/" + file.name)
+            }
+        }
+
+        if (!foundMinecraftMerged) {
+            println ""
+            println "ERROR: Could not find deobfuscated Minecraft JAR!"
+            println "Expected at: build/neoForm/neoFormJoined*/steps/packRecomp/output.jar"
+            println "Try running './gradlew :loader-neoforge:neoFormPackRecomp' first."
+            println ""
+            throw new GradleException("Deobfuscated Minecraft JAR not found")
+        }
+
+        // Copy IconExporter JAR to mods folder
+        def modJar = jar.archiveFile.get().asFile
+        def destModJar = new File(modsDir, modJar.name)
+        ant.copy(file: modJar, tofile: destModJar)
+        println "  Mod: ${modJar.name} -> mods/"
+
+        // Write production classpath file (libraries only, no mods)
+        def classpathFile = new File(dockerDir, "classpath-production.txt")
+        classpathFile.text = classpathEntries.join("\n") + "\n"
+
+        // Write mods list file
+        def modsFile = new File(dockerDir, "bundled-mods.txt")
+        def modsList = []
+        modsDir.eachFile { file ->
+            if (file.name.endsWith(".jar")) {
+                modsList.add(file.name)
+            }
+        }
+        modsFile.text = modsList.join("\n") + "\n"
+
+        // Write info about userdev mode
+        def infoFile = new File(dockerDir, "production-info.txt")
+        infoFile.text = """Docker Runtime Export (NeoForge - Userdev Mode)
+============================================
+Generated: ${new Date()}
+Minecraft: ${project.minecraft_version}
+NeoForge: ${project.neoforge_version}
+Mode: Userdev (uses deobfuscated Minecraft classes from Gradle)
+
+Library classpath entries: ${classpathEntries.size()}
+Bundled mods: ${modsList.size()}
+Deobfuscated Minecraft JAR included: ${foundMinecraftMerged ? 'Yes (' + minecraftMergedJarName + ')' : 'No'}
+
+This runtime uses the forgeclientuserdev launch target with
+deobfuscated Minecraft classes exported from the Gradle build.
+
+User mods should be standard NeoForge mods.
+
+The entrypoint will:
+1. Use included deobfuscated Minecraft classes (no download needed)
+2. Copy bundled mods and user mods to run/mods/
+3. Launch NeoForge in userdev mode
+"""
+
+        println ""
+        println "Docker production runtime exported to: ${dockerDir.absolutePath}"
+        println "Library classpath entries: ${classpathEntries.size()}"
+        println "Bundled mods: ${modsList.size()}"
+        println ""
+        println "Production mode supports loading user mods!"
+    }
+}

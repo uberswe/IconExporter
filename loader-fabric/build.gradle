@@ -6,6 +6,15 @@ plugins {
 }
 
 repositories {
+    // Modrinth Maven (more reliable)
+    maven {
+        name "Modrinth"
+        url "https://api.modrinth.com/maven"
+        content {
+            includeGroup "maven.modrinth"
+        }
+    }
+    // Forge Config API Port (backup)
     maven {
         name "Forge Config API Port"
         url "https://raw.githubusercontent.com/Fuzss/modresources/main/maven/"
@@ -62,3 +71,222 @@ modrinth {
     }
 }
 tasks.modrinth.dependsOn(tasks.remapJar)
+
+// Add Fabric-specific manifest attributes to the dev JAR
+// These are required for Fabric Loader to recognize the JAR as a mod in development mode
+jar {
+    manifest {
+        attributes(
+            'Fabric-Jar-Type': 'classes',
+            'Fabric-Mapping-Namespace': 'named',
+            'Fabric-Loom-Version': '1.7.4',
+            'Fabric-Gradle-Version': '8.8',
+            'Fabric-Loader-Version': '0.16.0',
+            'Fabric-Mixin-Version': '0.13.3+mixin.0.8.5',
+            'Fabric-Mixin-Group': 'net.fabricmc',
+            'Fabric-Minecraft-Version': project.minecraft_version
+        )
+    }
+}
+
+// Task to generate a production runtime for Docker that supports user mods
+// This exports remapped JARs (intermediary mappings) and downloads production Minecraft client
+task exportDockerProductionRuntime {
+    description = "Exports a production runtime for Docker that supports loading user mods"
+    group = "docker"
+
+    // Use remapJar (intermediary mappings) for production mode
+    dependsOn remapJar, "downloadAssets"
+
+    doLast {
+        def dockerDir = project.file("${project.rootDir}/docker-runtime")
+        def libsDir = new File(dockerDir, "libs")
+        def modsDir = new File(dockerDir, "mods")
+
+        dockerDir.mkdirs()
+        libsDir.mkdirs()
+        modsDir.mkdirs()
+
+        // Collect production classpath entries (excluding mods)
+        def classpathEntries = []
+
+        // Get runtime classpath - filter to only include libraries, not mods
+        configurations.runtimeClasspath.files.each { file ->
+            // Skip mod JARs - they'll go in the mods folder
+            // Fabric API uses many submodule patterns: fabric-api-*, fabric-*-v1-*, fabric-*-v0-*, etc.
+            // BUT fabric-loader-* is a library (not a mod) and must stay in libs/
+            def isFabricApiMod = file.name.startsWith("fabric-") && !file.name.startsWith("fabric-loader")
+            if (file.name.contains("cyclopscore") ||
+                isFabricApiMod ||
+                file.name.contains("forgeconfigapiport")) {
+                // These are mods - copy to mods folder
+                def destFile = new File(modsDir, file.name)
+                if (!destFile.exists()) {
+                    ant.copy(file: file, tofile: destFile)
+                }
+                println "  Mod: ${file.name} -> mods/"
+            } else if (file.name.contains("minecraft-merged")) {
+                // Skip dev Minecraft JAR - we'll download production client
+                println "  Skipping dev Minecraft JAR: ${file.name}"
+            } else {
+                // Library - add to classpath
+                def destFile = new File(libsDir, file.name)
+                if (!destFile.exists()) {
+                    ant.copy(file: file, tofile: destFile)
+                }
+                classpathEntries.add("libs/" + file.name)
+            }
+        }
+
+        // Copy remapped IconExporter JAR to mods folder
+        def remappedJar = remapJar.archiveFile.get().asFile
+        def destModJar = new File(modsDir, remappedJar.name)
+        ant.copy(file: remappedJar, tofile: destModJar)
+        println "  Mod: ${remappedJar.name} -> mods/"
+
+        // Write production classpath file (libraries only, no mods)
+        def classpathFile = new File(dockerDir, "classpath-production.txt")
+        classpathFile.text = classpathEntries.join("\n") + "\n"
+
+        // Write mods list file
+        def modsFile = new File(dockerDir, "bundled-mods.txt")
+        def modsList = []
+        modsDir.eachFile { file ->
+            if (file.name.endsWith(".jar")) {
+                modsList.add(file.name)
+            }
+        }
+        modsFile.text = modsList.join("\n") + "\n"
+
+        // Write info about production mode
+        def infoFile = new File(dockerDir, "production-info.txt")
+        infoFile.text = """Docker Production Runtime Export
+================================
+Generated: ${new Date()}
+Minecraft: ${project.minecraft_version}
+Mode: Production (intermediary mappings)
+
+Library classpath entries: ${classpathEntries.size()}
+Bundled mods: ${modsList.size()}
+
+Production mode allows loading user mods from the mods/ folder.
+User mods should be standard Fabric mods (intermediary mappings).
+
+The entrypoint will:
+1. Download the official Minecraft client JAR from Mojang
+2. Copy bundled mods and user mods to run/mods/
+3. Launch Fabric Loader in production mode
+"""
+
+        println ""
+        println "Docker production runtime exported to: ${dockerDir.absolutePath}"
+        println "Library classpath entries: ${classpathEntries.size()}"
+        println "Bundled mods: ${modsList.size()}"
+        println ""
+        println "Production mode supports loading user mods!"
+    }
+}
+
+// Task to generate a run script for Docker that bypasses Gradle (development mode)
+// This captures all classpath information from Loom's configurations
+task exportDockerRunScript {
+    description = "Exports a run script and classpath for running Minecraft in Docker without Gradle (dev mode)"
+    group = "docker"
+
+    // Use jar task (dev JAR with named mappings) instead of remapJar (intermediary)
+    // This is required because Docker runs in development mode with named Minecraft JAR
+    dependsOn jar, "downloadAssets"
+
+    doLast {
+        def dockerDir = project.file("${project.rootDir}/docker-runtime")
+        def libsDir = new File(dockerDir, "libs")
+
+        dockerDir.mkdirs()
+        libsDir.mkdirs()
+
+        // Collect all classpath entries
+        def classpathEntries = []
+
+        // Get runtime classpath (includes mod dependencies and Minecraft)
+        configurations.runtimeClasspath.files.each { file ->
+            def destFile = new File(libsDir, file.name)
+            if (!destFile.exists()) {
+                ant.copy(file: file, tofile: destFile)
+            }
+            classpathEntries.add("libs/" + file.name)
+        }
+
+        // Add the mod jar (dev JAR with named mappings for development mode)
+        def modJar = jar.archiveFile.get().asFile
+        def destModJar = new File(libsDir, modJar.name)
+        ant.copy(file: modJar, tofile: destModJar)
+        classpathEntries.add("libs/" + modJar.name)
+
+        // Write classpath file (with trailing newline for POSIX compliance)
+        def classpathFile = new File(dockerDir, "classpath.txt")
+        classpathFile.text = classpathEntries.join("\n") + "\n"
+
+        // Create run script with Fabric main class
+        def runScript = new File(dockerDir, "run-minecraft.sh")
+        runScript.text = '''#!/bin/bash
+# Auto-generated Minecraft run script for Docker
+# Generated by: ./gradlew :loader-fabric:exportDockerRunScript
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RUN_DIR="${SCRIPT_DIR}/run"
+
+# Build classpath
+CLASSPATH=""
+while IFS= read -r line; do
+    if [ -n "$line" ]; then
+        CLASSPATH="${CLASSPATH}:${SCRIPT_DIR}/${line}"
+    fi
+done < "${SCRIPT_DIR}/classpath.txt"
+CLASSPATH="${CLASSPATH:1}" # Remove leading colon
+
+# JVM arguments
+JVM_ARGS="${JAVA_OPTS:--Xmx4G -Xms2G}"
+
+# Fabric uses net.fabricmc.loader.impl.launch.knot.KnotClient as main class
+MAIN_CLASS="net.fabricmc.loader.impl.launch.knot.KnotClient"
+
+echo "Starting Minecraft..."
+echo "Classpath entries: $(wc -l < "${SCRIPT_DIR}/classpath.txt")"
+echo "Run directory: $RUN_DIR"
+
+mkdir -p "$RUN_DIR"
+cd "$RUN_DIR"
+
+exec java $JVM_ARGS \\
+    -Dfabric.gameJarPath="${SCRIPT_DIR}/libs/minecraft-merged-client.jar" \\
+    -Dfabric.development=false \\
+    -cp "$CLASSPATH" \\
+    "$MAIN_CLASS"
+'''
+        runScript.setExecutable(true)
+
+        // Write info file
+        def infoFile = new File(dockerDir, "info.txt")
+        infoFile.text = """Docker Runtime Export
+======================
+Generated: ${new Date()}
+Minecraft: ${project.minecraft_version}
+Classpath entries: ${classpathEntries.size()}
+Main Class: net.fabricmc.loader.impl.launch.knot.KnotClient
+
+To use in Docker:
+1. Copy docker-runtime/ to Docker image
+2. Create run/ directory with mods, config, etc
+3. Run ./run-minecraft.sh
+"""
+
+        println "Docker runtime exported to: ${dockerDir.absolutePath}"
+        println "Classpath entries: ${classpathEntries.size()}"
+        println ""
+        println "To use in Docker:"
+        println "1. Copy docker-runtime/ to Docker image"
+        println "2. Run ./run-minecraft.sh"
+    }
+}

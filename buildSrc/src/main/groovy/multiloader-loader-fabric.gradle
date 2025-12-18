@@ -71,3 +71,20 @@ publishing {
     }
 }
 
+// Fix for Docker/CI: Ensure minecraftLibraries can resolve LWJGL from Mojang's library server
+// Loom's minecraftLibraries configuration may not include all necessary repositories
+afterEvaluate {
+    configurations.findByName('minecraftLibraries')?.incoming?.beforeResolve {
+        repositories {
+            maven {
+                name = 'Mojang Libraries (Docker Fix)'
+                url = 'https://libraries.minecraft.net/'
+                content {
+                    includeGroupAndSubgroups('org.lwjgl')
+                    includeGroupAndSubgroups('com.mojang')
+                }
+            }
+        }
+    }
+}
+

@@ -79,6 +79,40 @@ plugins {
     id 'org.gradle.toolchains.foojay-resolver-convention' version '0.8.0'
 }
 
+// Add repositories for Minecraft libraries (needed for Docker/CI builds)
+// Loom respects dependencyResolutionManagement for minecraftLibraries configuration
+dependencyResolutionManagement {
+    repositories {
+        // LOCAL LWJGL - populated by download-lwjgl.sh in Docker builds
+        // Must be first for Docker builds to find LWJGL
+        maven {
+            name = 'Local LWJGL Repo'
+            url = uri('/iconexporter/local-maven-repo')
+            content {
+                includeGroupAndSubgroups('org.lwjgl')
+            }
+        }
+        // Mojang's library server - primary source for LWJGL and Minecraft deps
+        maven {
+            name = 'Mojang Libraries'
+            url = 'https://libraries.minecraft.net/'
+        }
+        mavenCentral()
+        maven {
+            name = 'Fabric Maven'
+            url = 'https://maven.fabricmc.net/'
+        }
+        maven {
+            name = 'ParchmentMC'
+            url = 'https://maven.parchmentmc.org/'
+        }
+        maven {
+            name = 'NeoForge'
+            url = 'https://maven.neoforged.net/releases'
+        }
+    }
+}
+
 // This should match the folder name of the project, or else IDEA may complain (see https://youtrack.jetbrains.com/issue/IDEA-317606)
 rootProject.name = 'IconExporter'
 include('loader-common')

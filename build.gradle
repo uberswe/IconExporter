@@ -8,3 +8,64 @@ plugins {
 	id 'net.neoforged.gradle.userdev' version '7.0.145' apply false
 //	id 'net.minecraftforge.gradle' version '[6.0.24,6.2)' apply false // Don't load yet to fix DiffPatch conflict issue between FG and NG
 }
+
+// Task to download Minecraft client JAR for Docker container
+task downloadMinecraftClient {
+    description = 'Downloads the Minecraft client JAR for use in Docker'
+    group = 'docker'
+
+    def minecraftVersion = project.findProperty('minecraft_version') ?: '1.21.1'
+    def clientJarPath = file("${buildDir}/minecraft-client/minecraft-client-${minecraftVersion}.jar")
+
+    outputs.file(clientJarPath)
+
+    doLast {
+        println "Downloading Minecraft ${minecraftVersion} client JAR..."
+
+        // Create directory
+        clientJarPath.parentFile.mkdirs()
+
+        // Download version manifest
+        def versionManifestUrl = 'https://piston-meta.mojang.com/mc/game/version_manifest_v2.json'
+        def versionManifest = new groovy.json.JsonSlurper().parse(new URL(versionManifestUrl))
+
+        // Find version
+        def versionInfo = versionManifest.versions.find { it.id == minecraftVersion }
+        if (!versionInfo) {
+            throw new GradleException("Minecraft version ${minecraftVersion} not found in manifest")
+        }
+
+        println "Found version ${minecraftVersion}, downloading metadata..."
+
+        // Download version JSON
+        def versionJson = new groovy.json.JsonSlurper().parse(new URL(versionInfo.url))
+
+        // Get client download URL
+        def clientUrl = versionJson.downloads.client.url
+        def clientSha1 = versionJson.downloads.client.sha1
+
+        println "Downloading client from: ${clientUrl}"
+        println "Expected SHA1: ${clientSha1}"
+
+        // Download client JAR
+        new URL(clientUrl).withInputStream { input ->
+            clientJarPath.withOutputStream { output ->
+                output << input
+            }
+        }
+
+        // Verify SHA1
+        def actualSha1 = java.security.MessageDigest.getInstance('SHA-1')
+            .digest(clientJarPath.bytes)
+            .encodeHex()
+            .toString()
+
+        if (actualSha1 != clientSha1) {
+            clientJarPath.delete()
+            throw new GradleException("SHA1 mismatch! Expected: ${clientSha1}, Got: ${actualSha1}")
+        }
+
+        println "Client JAR downloaded successfully to: ${clientJarPath}"
+        println "SHA1 verified: ${actualSha1}"
+    }
+}

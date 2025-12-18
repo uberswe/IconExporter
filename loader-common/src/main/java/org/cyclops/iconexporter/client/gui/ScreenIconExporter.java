@@ -1,9 +1,11 @@
 package org.cyclops.iconexporter.client.gui;
 
 import com.google.common.collect.Queues;
+import com.mojang.blaze3d.systems.RenderSystem;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.Screen;
+import org.lwjgl.opengl.GL11;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.nbt.Tag;
@@ -18,6 +20,7 @@ import org.cyclops.cyclopscore.datastructure.Wrapper;
 import org.cyclops.cyclopscore.helper.IModHelpers;
 import org.cyclops.cyclopscore.init.IModBase;
 import org.cyclops.iconexporter.GeneralConfig;
+import org.cyclops.iconexporter.export.ExportCompletionUtil;
 import org.cyclops.iconexporter.helpers.IIconExporterHelpers;
 
 import java.io.File;
@@ -45,6 +48,7 @@ public class ScreenIconExporter extends Screen {
     private final IModBase mod;
     private final IIconExporterHelpers helpers;
     private final Queue<IExportTask> exportTasks;
+    private final boolean previousHideGui;
 
     public ScreenIconExporter(HolderLookup.Provider lookupProvider, int scaleImage, double scaleGui, IModBase mod, IIconExporterHelpers helpers) {
         super(Component.translatable("gui.itemexporter.name"));
@@ -54,6 +58,10 @@ public class ScreenIconExporter extends Screen {
         this.mod = mod;
         this.helpers = helpers;
         this.exportTasks = this.createExportTasks();
+
+        // Hide GUI (HUD/action bar) during export to prevent artifacts in screenshots
+        this.previousHideGui = Minecraft.getInstance().options.hideGui;
+        Minecraft.getInstance().options.hideGui = true;
     }
 
     @Override
@@ -63,6 +71,14 @@ public class ScreenIconExporter extends Screen {
         if (exportTasks.isEmpty()) {
             Minecraft.getInstance().setScreen(null);
             Minecraft.getInstance().player.sendSystemMessage(Component.translatable("gui.itemexporter.finished"));
+
+            // Write completion marker for Docker/automation
+            try {
+                File baseDir = new File(Minecraft.getInstance().gameDirectory, GeneralConfig.exportBaseDir);
+                ExportCompletionUtil.writeCompletionMarker(baseDir, this.mod);
+            } catch (Exception e) {
+                this.mod.log("Failed to write completion marker: " + e.getMessage());
+            }
 
             // Check if we should quit after export (for CI/automation)
             boolean shouldQuit = GeneralConfig.autoQuitAfterExport;
@@ -93,6 +109,13 @@ public class ScreenIconExporter extends Screen {
     @Override
     protected void renderBlurredBackground(float p_330683_) {
         // Do nothing
+    }
+
+    @Override
+    public void removed() {
+        super.removed();
+        // Restore the previous hideGui setting
+        Minecraft.getInstance().options.hideGui = this.previousHideGui;
     }
 
     public String serializeNbtTag(Tag tag) {
@@ -129,6 +152,16 @@ public class ScreenIconExporter extends Screen {
         Wrapper<Integer> taskProcessed = new Wrapper<>(0);
         Queue<IExportTask> exportTasks = Queues.newArrayDeque();
 
+        // Get dimensions to fill - use actual framebuffer pixels converted to GUI space to ensure
+        // complete coverage. The screenshot captures framebuffer pixels, but fill() works in GUI coords.
+        // We need to fill enough GUI units to cover the entire framebuffer area being captured.
+        // Using max of GUI-scaled dimensions and scale size ensures coverage regardless of GUI scale.
+        int guiScaledWidth = Minecraft.getInstance().getWindow().getGuiScaledWidth();
+        int guiScaledHeight = Minecraft.getInstance().getWindow().getGuiScaledHeight();
+        // Add extra margin to ensure complete coverage - use scale size as minimum
+        int fillWidth = Math.max(guiScaledWidth, this.scaleImage) + 100;
+        int fillHeight = Math.max(guiScaledHeight, this.scaleImage) + 100;
+
         // Add fluids
         for (Map.Entry<ResourceKey<Fluid>, Fluid> fluidEntry : BuiltInRegistries.FLUID.entrySet()) {
             tasks.set(tasks.get() + 1);
@@ -136,7 +169,10 @@ public class ScreenIconExporter extends Screen {
             exportTasks.add((guiGraphics) -> {
                 taskProcessed.set(taskProcessed.get() + 1);
                 signalStatus(tasks, taskProcessed);
-                guiGraphics.fill(0, 0, scaleModifiedRounded, scaleModifiedRounded, BACKGROUND_COLOR);
+                // Clear framebuffer to prevent world from showing through transparent parts
+                clearFramebufferWithBackgroundColor();
+                // Also fill with GUI graphics to ensure the render pipeline is in correct state
+                guiGraphics.fill(0, 0, fillWidth, fillHeight, BACKGROUND_COLOR);
                 ItemRenderUtil.renderFluid(guiGraphics, fluidEntry.getValue(), scaleModified, this.helpers);
                 ImageExportUtil.exportImageFromScreenshot(baseDir, baseFilename, this.scaleImage, BACKGROUND_COLOR_SHIFTED, this.mod);
             });
@@ -155,7 +191,10 @@ public class ScreenIconExporter extends Screen {
                 exportTasks.add((guiGraphics) -> {
                     taskProcessed.set(taskProcessed.get() + 1);
                     signalStatus(tasks, taskProcessed);
-                    guiGraphics.fill(0, 0, scaleModifiedRounded, scaleModifiedRounded, BACKGROUND_COLOR);
+                    // Clear framebuffer to prevent world from showing through transparent parts
+                    clearFramebufferWithBackgroundColor();
+                    // Also fill with GUI graphics to ensure the render pipeline is in correct state
+                    guiGraphics.fill(0, 0, fillWidth, fillHeight, BACKGROUND_COLOR);
                     ItemRenderUtil.renderItem(guiGraphics, itemStack, scaleModified);
                     ImageExportUtil.exportImageFromScreenshot(baseDir, baseFilename, this.scaleImage, BACKGROUND_COLOR_SHIFTED, this.mod);
                     if (!itemStack.getComponents().isEmpty() && GeneralConfig.fileNameHashComponents) {
@@ -170,6 +209,18 @@ public class ScreenIconExporter extends Screen {
 
     protected void signalStatus(Wrapper<Integer> tasks, Wrapper<Integer> taskProcessed) {
         Minecraft.getInstance().player.displayClientMessage(Component.translatable("gui.itemexporter.status", taskProcessed.get(), tasks.get()), true);
+    }
+
+    /**
+     * Clears the framebuffer with the background color to ensure no world geometry
+     * bleeds through transparent parts of items.
+     * This is necessary because guiGraphics.fill() uses alpha blending which can
+     * cause world pixels to show through when items have transparency.
+     */
+    private static void clearFramebufferWithBackgroundColor() {
+        // Clear color buffer with our background color (RGB 254, 255, 255)
+        RenderSystem.clearColor(254f / 255f, 1.0f, 1.0f, 1.0f);
+        RenderSystem.clear(GL11.GL_COLOR_BUFFER_BIT, Minecraft.ON_OSX);
     }
 
     private static String detectLoader() {
