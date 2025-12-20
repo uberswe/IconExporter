@@ -6,6 +6,7 @@ import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.common.Mod;
+import net.neoforged.fml.event.lifecycle.FMLLoadCompleteEvent;
 import org.apache.logging.log4j.Level;
 import org.cyclops.cyclopscore.config.ConfigHandler;
 import org.cyclops.cyclopscore.init.ModBaseVersionable;
@@ -40,6 +41,21 @@ public class IconExporter extends ModBaseVersionable<IconExporter> {
 
     public IconExporter(IEventBus modEventBus) {
         super(Reference.MOD_ID, (instance) -> _instance = instance, modEventBus);
+        // Event handlers are registered lazily AFTER all mods are loaded
+        // to avoid affecting event bus ordering during mod initialization.
+        // FMLLoadCompleteEvent fires at the very end of mod loading.
+        modEventBus.addListener(this::onLoadComplete);
+    }
+
+    private void onLoadComplete(FMLLoadCompleteEvent event) {
+        // Start lazy initialization for auto-export features
+        // This happens after all mods are loaded, so it won't affect
+        // other mods' event listener ordering during startup
+        if (getModHelpers().getMinecraftHelpers().isClientSide()) {
+            event.enqueueWork(() -> {
+                ClientProxy.startLazyInitialization();
+            });
+        }
     }
 
     @Override
